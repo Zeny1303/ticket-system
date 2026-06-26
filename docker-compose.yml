@@ -1,0 +1,60 @@
+version: "3.8"
+
+services:
+  # PostgreSQL database service
+  db:
+    image: postgres:15-alpine
+    container_name: ticket-system-db
+    restart: unless-stopped
+    environment:
+      # These environment variables are read by the official postgres image
+      # to initialize the database on first run.
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ticketdb
+    ports:
+      # Map host port 5432 to container port 5432.
+      # Allows you to connect to the DB from your host machine (e.g., with pgAdmin).
+      - "5432:5432"
+    volumes:
+      # Named volume — persists DB data across container restarts.
+      # Without this, all data is lost every time the container stops.
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # Check if PostgreSQL is ready to accept connections.
+      # The app service uses this to know when to start.
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Go application service
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ticket-system-app
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      # These override .env file values inside the container.
+      # DB_HOST is "db" — the service name above, which Docker DNS resolves
+      # to the postgres container's IP address automatically.
+      PORT: 8080
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: ticketdb
+      JWT_SECRET: change-this-secret-in-production-use-openssl-rand-hex-32
+      JWT_EXPIRY_HOURS: 24
+    depends_on:
+      # Wait for the db service's healthcheck to pass before starting the app.
+      # Without this, the app might start before PostgreSQL is ready and crash.
+      db:
+        condition: service_healthy
+
+# Named volumes are managed by Docker and persist between container restarts.
+volumes:
+  postgres_data:

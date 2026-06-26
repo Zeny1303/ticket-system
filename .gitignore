@@ -1,0 +1,35 @@
+
+
+
+# Environment variables — NEVER commit real secrets
+.env
+
+# Compiled Go binary
+server
+ticket-system
+
+# Go build cache
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary and coverage output
+*.test
+*.out
+coverage.html
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Go workspace
+go.work
+go.work.sum

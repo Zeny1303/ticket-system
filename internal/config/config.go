@@ -9,34 +9,18 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// Config holds all configuration values for the application.
-// Every other package reads config from here — never from os.Getenv directly.
-// This is the Single Responsibility Principle applied to configuration.
 type Config struct {
-	// Server
-	Port string
-
-	// Database
-	DBHost     string
-	DBPort     string
-	DBUser     string
-	DBPassword string
-	DBName     string
-
-	// JWT
+	Port           string
+	DBHost         string
+	DBPort         string
+	DBUser         string
+	DBPassword     string
+	DBName         string
 	JWTSecret      string
 	JWTExpiryHours int
 }
 
-// Load reads the .env file and populates the Config struct.
-// It is called once at application startup in main.go.
-// If a required variable is missing, the app logs a fatal error and exits.
-// This is intentional — a misconfigured app should fail fast, not silently.
 func Load() *Config {
-	// godotenv.Load() reads the .env file from the current directory.
-	// If the file doesn't exist (e.g., in production where env vars are
-	// injected directly), we log a warning but continue — the app might
-	// still work with environment variables set by the deployment platform.
 	if err := godotenv.Load(); err != nil {
 		log.Println("Warning: .env file not found. Reading from environment variables.")
 	}
@@ -51,14 +35,10 @@ func Load() *Config {
 		JWTSecret:  getEnv("JWT_SECRET", ""),
 	}
 
-	// JWT secret is non-negotiable — the app cannot work without it.
-	// An empty JWT secret would mean all tokens are signed with an empty
-	// key, which is a critical security vulnerability.
 	if cfg.JWTSecret == "" {
 		log.Fatal("FATAL: JWT_SECRET environment variable is required and cannot be empty.")
 	}
 
-	// Parse JWT expiry hours with a safe default of 24 hours.
 	expiryStr := getEnv("JWT_EXPIRY_HOURS", "24")
 	expiry, err := strconv.Atoi(expiryStr)
 	if err != nil || expiry <= 0 {
@@ -70,9 +50,6 @@ func Load() *Config {
 	return cfg
 }
 
-// DSN (Data Source Name) builds the PostgreSQL connection string from config fields.
-// GORM's postgres driver requires this exact format.
-// Example output: "host=localhost user=postgres password=secret dbname=ticketdb port=5432 sslmode=disable TimeZone=UTC"
 func (c *Config) DSN() string {
 	return fmt.Sprintf(
 		"host=%s user=%s password=%s dbname=%s port=%s sslmode=disable TimeZone=UTC",
@@ -80,9 +57,6 @@ func (c *Config) DSN() string {
 	)
 }
 
-// getEnv is a helper that reads an environment variable.
-// If the variable is not set, it returns the provided fallback value.
-// This pattern is cleaner than repeating os.Getenv + nil checks everywhere.
 func getEnv(key, fallback string) string {
 	if value, exists := os.LookupEnv(key); exists && value != "" {
 		return value

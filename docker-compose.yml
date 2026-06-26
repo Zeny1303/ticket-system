@@ -1,7 +1,4 @@
-# Issue #23 fix: removed deprecated 'version' key (Docker Compose v2+).
-
 services:
-  # PostgreSQL database service
   db:
     image: postgres:15-alpine
     container_name: ticket-system-db
@@ -20,7 +17,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # Go application service
   app:
     build:
       context: .
@@ -34,8 +30,6 @@ services:
       DB_HOST: db
       DB_PORT: ${DB_PORT:-5432}
       DB_USER: ${DB_USER:-postgres}
-      # Issue #9 fix: DB_PASSWORD and JWT_SECRET now read from host environment
-      # or .env file — never hardcoded in this file.
       DB_PASSWORD: ${DB_PASSWORD:-postgres}
       DB_NAME: ${DB_NAME:-ticketdb}
       JWT_SECRET: ${JWT_SECRET}

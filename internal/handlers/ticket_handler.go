@@ -14,13 +14,11 @@ import (
 	"github.com/go-playground/validator/v10"
 )
 
-// TicketHandler holds dependencies for ticket HTTP handlers.
 type TicketHandler struct {
 	ticketService services.TicketService
 	validate      *validator.Validate
 }
 
-// NewTicketHandler constructs a TicketHandler.
 func NewTicketHandler(ticketService services.TicketService) *TicketHandler {
 	return &TicketHandler{
 		ticketService: ticketService,
@@ -28,15 +26,7 @@ func NewTicketHandler(ticketService services.TicketService) *TicketHandler {
 	}
 }
 
-// CreateTicket handles POST /tickets
-//
-// Protected route — AuthMiddleware injects userID into context.
-//  1. Extract authenticated user ID
-//  2. Parse and validate request body
-//  3. Call service to create ticket
-//  4. Return 201 Created
 func (h *TicketHandler) CreateTicket(c *gin.Context) {
-	// Issue #13 fix: check bool return from GetUserID.
 	userID, ok := middleware.GetUserID(c)
 	if !ok {
 		utils.Error(c, http.StatusUnauthorized, "Unauthorized")
@@ -63,10 +53,6 @@ func (h *TicketHandler) CreateTicket(c *gin.Context) {
 	utils.Success(c, http.StatusCreated, "Ticket created successfully", ticket)
 }
 
-// GetUserTickets handles GET /tickets
-//
-// Returns all tickets belonging to the authenticated user.
-// Returns an empty array (not null) if the user has no tickets.
 func (h *TicketHandler) GetUserTickets(c *gin.Context) {
 	userID, ok := middleware.GetUserID(c)
 	if !ok {
@@ -80,7 +66,6 @@ func (h *TicketHandler) GetUserTickets(c *gin.Context) {
 		return
 	}
 
-	// Ensure we return [] not null in JSON when the user has no tickets.
 	if tickets == nil {
 		tickets = []models.Ticket{}
 	}
@@ -88,9 +73,6 @@ func (h *TicketHandler) GetUserTickets(c *gin.Context) {
 	utils.Success(c, http.StatusOK, "Tickets retrieved successfully", tickets)
 }
 
-// GetTicketByID handles GET /tickets/:id
-//
-// Returns a single ticket by ID. Ownership is enforced at the service/repository layer.
 func (h *TicketHandler) GetTicketByID(c *gin.Context) {
 	userID, ok := middleware.GetUserID(c)
 	if !ok {
@@ -106,7 +88,6 @@ func (h *TicketHandler) GetTicketByID(c *gin.Context) {
 
 	ticket, err := h.ticketService.GetTicketByID(uint(ticketID), userID)
 	if err != nil {
-		// Issue #12 fix: errors.Is() against sentinel errors.
 		if errors.Is(err, apperrors.ErrTicketNotFound) {
 			utils.Error(c, http.StatusNotFound, "Ticket not found")
 			return
@@ -118,10 +99,6 @@ func (h *TicketHandler) GetTicketByID(c *gin.Context) {
 	utils.Success(c, http.StatusOK, "Ticket retrieved successfully", ticket)
 }
 
-// UpdateTicketStatus handles PATCH /tickets/:id/status
-//
-// Updates only the status field of a ticket.
-// All business rule validation happens in the service layer.
 func (h *TicketHandler) UpdateTicketStatus(c *gin.Context) {
 	userID, ok := middleware.GetUserID(c)
 	if !ok {
@@ -148,7 +125,6 @@ func (h *TicketHandler) UpdateTicketStatus(c *gin.Context) {
 
 	ticket, err := h.ticketService.UpdateTicketStatus(uint(ticketID), userID, &req)
 	if err != nil {
-		// Issue #12 fix: map sentinel errors to correct HTTP status codes.
 		switch {
 		case errors.Is(err, apperrors.ErrTicketNotFound):
 			utils.Error(c, http.StatusNotFound, err.Error())

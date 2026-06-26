@@ -1,13 +1,15 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
-	"github.com/ticket-system/internal/middleware"
-	"github.com/ticket-system/internal/models"
-	"github.com/ticket-system/internal/services"
-	"github.com/ticket-system/internal/utils"
+	"github.com/Zeny1303/ticket-system/internal/middleware"
+	"github.com/Zeny1303/ticket-system/internal/models"
+	"github.com/Zeny1303/ticket-system/internal/services"
+	"github.com/Zeny1303/ticket-system/pkg/apperrors"
+	"github.com/Zeny1303/ticket-system/pkg/utils"
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
 )
@@ -28,16 +30,18 @@ func NewTicketHandler(ticketService services.TicketService) *TicketHandler {
 
 // CreateTicket handles POST /tickets
 //
-// This is a protected route — AuthMiddleware runs first and injects userID.
-// The handler:
-//   1. Gets the authenticated user's ID from context
-//   2. Parses and validates the request body
-//   3. Calls the service to create the ticket
-//   4. Returns 201 Created with the new ticket
+// Protected route — AuthMiddleware injects userID into context.
+//  1. Extract authenticated user ID
+//  2. Parse and validate request body
+//  3. Call service to create ticket
+//  4. Return 201 Created
 func (h *TicketHandler) CreateTicket(c *gin.Context) {
-	// Get the authenticated user's ID that AuthMiddleware stored in context.
-	// This is always safe on protected routes — middleware has already validated the token.
-	userID := middleware.GetUserID(c)
+	// Issue #13 fix: check bool return from GetUserID.
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		utils.Error(c, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
 
 	var req models.CreateTicketRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -63,9 +67,12 @@ func (h *TicketHandler) CreateTicket(c *gin.Context) {
 //
 // Returns all tickets belonging to the authenticated user.
 // Returns an empty array (not null) if the user has no tickets.
-// This is important — frontend clients should not need to handle null vs empty array.
 func (h *TicketHandler) GetUserTickets(c *gin.Context) {
-	userID := middleware.GetUserID(c)
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		utils.Error(c, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
 
 	tickets, err := h.ticketService.GetUserTickets(userID)
 	if err != nil {
@@ -73,9 +80,7 @@ func (h *TicketHandler) GetUserTickets(c *gin.Context) {
 		return
 	}
 
-	// If tickets is nil (which shouldn't happen with our repo implementation),
-	// we ensure we return an empty slice, not null in the JSON response.
-	// JSON null vs [] is a common source of frontend bugs.
+	// Ensure we return [] not null in JSON when the user has no tickets.
 	if tickets == nil {
 		tickets = []models.Ticket{}
 	}
@@ -85,15 +90,14 @@ func (h *TicketHandler) GetUserTickets(c *gin.Context) {
 
 // GetTicketByID handles GET /tickets/:id
 //
-// Returns a single ticket by its ID.
-// The ownership check is done inside the service/repository layer —
-// the handler just calls the service and maps errors to HTTP status codes.
+// Returns a single ticket by ID. Ownership is enforced at the service/repository layer.
 func (h *TicketHandler) GetTicketByID(c *gin.Context) {
-	userID := middleware.GetUserID(c)
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		utils.Error(c, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
 
-	// c.Param("id") extracts the :id path parameter from the URL.
-	// It returns a string — we must parse it to uint.
-	// In Django: kwargs['pk']. In Express: req.params.id
 	ticketID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
 		utils.Error(c, http.StatusBadRequest, "Invalid ticket ID: must be a positive integer")
@@ -102,9 +106,8 @@ func (h *TicketHandler) GetTicketByID(c *gin.Context) {
 
 	ticket, err := h.ticketService.GetTicketByID(uint(ticketID), userID)
 	if err != nil {
-		if err.Error() == "ticket not found" {
-			// 404 Not Found — could mean doesn't exist OR belongs to another user.
-			// We intentionally don't distinguish these cases.
+		// Issue #12 fix: errors.Is() against sentinel errors.
+		if errors.Is(err, apperrors.ErrTicketNotFound) {
 			utils.Error(c, http.StatusNotFound, "Ticket not found")
 			return
 		}
@@ -118,10 +121,13 @@ func (h *TicketHandler) GetTicketByID(c *gin.Context) {
 // UpdateTicketStatus handles PATCH /tickets/:id/status
 //
 // Updates only the status field of a ticket.
-// Full business rule validation happens in the service layer.
-// This handler's job: parse URL params, parse body, call service, map errors.
+// All business rule validation happens in the service layer.
 func (h *TicketHandler) UpdateTicketStatus(c *gin.Context) {
-	userID := middleware.GetUserID(c)
+	userID, ok := middleware.GetUserID(c)
+	if !ok {
+		utils.Error(c, http.StatusUnauthorized, "Unauthorized")
+		return
+	}
 
 	ticketID, err := strconv.ParseUint(c.Param("id"), 10, 64)
 	if err != nil {
@@ -142,19 +148,18 @@ func (h *TicketHandler) UpdateTicketStatus(c *gin.Context) {
 
 	ticket, err := h.ticketService.UpdateTicketStatus(uint(ticketID), userID, &req)
 	if err != nil {
-		// Map different business errors to appropriate HTTP status codes.
-		switch err.Error() {
-		case "ticket not found":
-			utils.Error(c, http.StatusNotFound, "Ticket not found")
-		case "invalid status. Must be one of: open, in_progress, closed":
+		// Issue #12 fix: map sentinel errors to correct HTTP status codes.
+		switch {
+		case errors.Is(err, apperrors.ErrTicketNotFound):
+			utils.Error(c, http.StatusNotFound, err.Error())
+		case errors.Is(err, apperrors.ErrInvalidStatus):
 			utils.Error(c, http.StatusBadRequest, err.Error())
+		case errors.Is(err, apperrors.ErrSameStatus):
+			utils.Error(c, http.StatusBadRequest, err.Error())
+		case errors.Is(err, apperrors.ErrInvalidTransition):
+			utils.Error(c, http.StatusUnprocessableEntity, err.Error())
 		default:
-			// Any transition error or unexpected error
-			if len(err.Error()) > 0 {
-				utils.Error(c, http.StatusUnprocessableEntity, err.Error())
-			} else {
-				utils.Error(c, http.StatusInternalServerError, "Failed to update ticket status")
-			}
+			utils.Error(c, http.StatusInternalServerError, "Failed to update ticket status")
 		}
 		return
 	}

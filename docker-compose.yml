@@ -1,4 +1,4 @@
-version: "3.8"
+# Issue #23 fix: removed deprecated 'version' key (Docker Compose v2+).
 
 services:
   # PostgreSQL database service
@@ -7,23 +7,15 @@ services:
     container_name: ticket-system-db
     restart: unless-stopped
     environment:
-      # These environment variables are read by the official postgres image
-      # to initialize the database on first run.
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: ticketdb
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      POSTGRES_DB: ${DB_NAME:-ticketdb}
     ports:
-      # Map host port 5432 to container port 5432.
-      # Allows you to connect to the DB from your host machine (e.g., with pgAdmin).
       - "5432:5432"
     volumes:
-      # Named volume — persists DB data across container restarts.
-      # Without this, all data is lost every time the container stops.
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      # Check if PostgreSQL is ready to accept connections.
-      # The app service uses this to know when to start.
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -38,23 +30,20 @@ services:
     ports:
       - "8080:8080"
     environment:
-      # These override .env file values inside the container.
-      # DB_HOST is "db" — the service name above, which Docker DNS resolves
-      # to the postgres container's IP address automatically.
-      PORT: 8080
+      PORT: ${PORT:-8080}
       DB_HOST: db
-      DB_PORT: 5432
-      DB_USER: postgres
-      DB_PASSWORD: postgres
-      DB_NAME: ticketdb
-      JWT_SECRET: change-this-secret-in-production-use-openssl-rand-hex-32
-      JWT_EXPIRY_HOURS: 24
+      DB_PORT: ${DB_PORT:-5432}
+      DB_USER: ${DB_USER:-postgres}
+      # Issue #9 fix: DB_PASSWORD and JWT_SECRET now read from host environment
+      # or .env file — never hardcoded in this file.
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      DB_NAME: ${DB_NAME:-ticketdb}
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRY_HOURS: ${JWT_EXPIRY_HOURS:-24}
+      APP_ENV: ${APP_ENV:-development}
     depends_on:
-      # Wait for the db service's healthcheck to pass before starting the app.
-      # Without this, the app might start before PostgreSQL is ready and crash.
       db:
         condition: service_healthy
 
-# Named volumes are managed by Docker and persist between container restarts.
 volumes:
   postgres_data:

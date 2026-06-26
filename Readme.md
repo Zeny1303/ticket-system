@@ -70,7 +70,8 @@ Repository (repository/)   ← Database queries only
 ```
 ticket-system/
 ├── cmd/
-│   └── main.go              # Entry point, dependency wiring, graceful shutdown
+│   └── server/
+│       └── main.go          # Entry point, dependency wiring, graceful shutdown
 ├── internal/
 │   ├── config/
 │   │   └── config.go        # Environment variable loading and validation
@@ -254,11 +255,11 @@ openssl rand -hex 32
 
 ## Local Setup (without Docker)
 
-**Prerequisites:** Go 1.21+, PostgreSQL 14+
+**Prerequisites:** Go 1.22+, PostgreSQL 14+
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/yourusername/ticket-system.git
+git clone https://github.com/Zeny1303/ticket-system.git
 cd ticket-system
 
 # 2. Install dependencies
@@ -272,7 +273,7 @@ cp .env.example .env
 # Edit .env with your PostgreSQL credentials and a strong JWT_SECRET
 
 # 5. Run the application
-go run ./cmd/main.go
+go run ./cmd/server
 
 # Server starts on http://localhost:8080
 ```

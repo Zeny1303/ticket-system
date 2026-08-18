@@ -1,186 +1,171 @@
-
 # DeskFlow — Concurrent Support Ticketing & Real-Time Routing Engine
 
-A high-throughput, low-latency support ticketing backend engine engineered with **Go (Golang)**, **Gin**, **PostgreSQL (GORM)**, **WebSockets**, and **Docker**.
+A high-throughput, low-latency support ticketing backend built with Go (Gin), PostgreSQL (GORM), WebSockets, and Docker. DeskFlow is designed for customer-support systems that require deterministic ticket state transitions, safe concurrent updates, and real-time agent notifications.
+
+Badges: <!-- add CI/coverage/license badges here -->
 
 ---
 
-## 📌 What is DeskFlow?
+## Quick overview
 
-**DeskFlow** is a backend system designed for customer support environments handling high concurrent ticket updates and real-time live agent interactions. It provides a deterministic, state-machine-driven lifecycle for tickets while offering bidirectional real-time event broadcasting to keep agents and users instantly synced.
-
----
-
-## 🎯 Problems DeskFlow Solves
-
-### 1. Concurrent State Overwrites & Race Conditions
-* **The Problem:** In standard ticketing backends, when multiple support agents or automated services update a ticket status simultaneously, concurrent read-modify-write operations lead to stale data overwrites and invalid status transitions.
-* **The Solution:** DeskFlow enforces strict status progression (`open` → `in_progress` → `closed`) utilizing **PostgreSQL row-level pessimistic locking (`SELECT FOR UPDATE`)** inside database transactions, preventing state conflicts and race conditions. Closed tickets cannot be reopened.
-
-### 2. High Polling Overhead for Real-Time Updates
-* **The Problem:** Traditional REST polling creates massive HTTP overhead, server load, and latency delays when multiple agents check for ticket responses and status updates.
-* **The Solution:** Implements a centralized **bidirectional WebSocket hub** using Go’s native concurrency primitives (goroutines and buffered channels) to broadcast real-time events with zero polling overhead and instant client updates.
-
-### 3. I/O Blocking During Secondary Operations
-* **The Problem:** Synchronous execution of side tasks (like sending email alerts or updating audit logs) increases HTTP response latency.
-* **The Solution:** Offloads notification delivery and audit events to **non-blocking worker pools**, keeping core database transactions fast, isolated, and responsive.
+- Purpose: Provide a robust backend for support teams that need safe concurrent ticket updates and real-time agent coordination.
+- Built with: Go, Gin, GORM (Postgres), WebSockets, Docker.
+- Key concepts: pessimistic row-level locking for state transitions, a central WebSocket hub for broadcasts, and background worker pools for non-blocking side-effects.
 
 ---
 
-## 🏗️ System Architecture
+## Features
 
-DeskFlow follows a clean, interface-driven layered architecture:
-
-```text
-HTTP / WebSocket Request
-        │
-        ▼
-   Router (routes/)
-        │
-        ▼
-Middleware (middleware/)        ← JWT Authentication & Request Logging
-        │
-        ▼
-  Handler (handlers/)           ← Request DTO parsing & validation
-        │
-        ▼
-  Service (services/)           ← Business rules, state machine transitions
-        │
-        ▼
-Repository (repository/)        ← Database operations & pessimistic locking
-        │
-        ▼
-Database (PostgreSQL via GORM)
-
-```
-
-### Architectural Principles:
-
-* **Separation of Concerns:** Handlers, domain services, and repository layers are strictly decoupled.
-* **Interface-Driven Dependency Injection:** Mockable services and repositories injected via constructors.
-* **Stateless JWT Security:** Token-based authentication with bcrypt-hashed credentials.
+- Deterministic ticket state machine: `open` → `in_progress` → `closed` with enforced transitions
+- Safe concurrent updates using PostgreSQL `SELECT FOR UPDATE` within transactions
+- Real-time two-way updates via a centralized WebSocket hub
+- Non-blocking worker pools for notifications and audit logging
+- JWT auth with bcrypt-hashed credentials
+- Docker & docker-compose for easy local setup
 
 ---
 
-## 🗂️ Project Structure
+## Quickstart
 
-```text
-deskflow/
-├── cmd/
-│   └── server/
-│       └── main.go              # Entry point, dependency wiring, graceful shutdown
-├── internal/
-│   ├── config/
-│   │   └── config.go            # Environment variable loading & validation
-│   ├── database/
-│   │   └── database.go          # DB connection & GORM auto-migrations
-│   ├── handlers/
-│   │   ├── auth_handler.go      # User registration & login endpoints
-│   │   ├── ticket_handler.go    # Ticket CRUD & status mutation handlers
-│   │   └── health_handler.go    # System health check endpoint
-│   ├── middleware/
-│   │   └── auth.go              # JWT authentication & route gating
-│   ├── models/
-│   │   ├── user.go              # User models & auth DTOs
-│   │   └── ticket.go            # Ticket models, state constants & DTOs
-│   ├── repository/
-│   │   ├── user_repository.go   # User data access layer
-│   │   └── ticket_repository.go # Ticket queries & transactional updates
-│   ├── routes/
-│   │   └── routes.go            # Central API route definitions
-│   └── services/
-│       ├── auth_service.go      # Authentication & token generation logic
-│       └── ticket_service.go    # Ticket lifecycle & state enforcement
-├── Dockerfile                   # Multi-stage Docker build
-├── docker-compose.yml           # App + PostgreSQL container orchestration
-├── .env.example                 # Environment configuration template
-├── go.mod
-└── README.md
-
-```
-
----
-
-## 🚀 API Endpoints
-
-### Public Endpoints
-
-| Method | Endpoint | Description |
-| --- | --- | --- |
-| `GET` | `/health` | Health check endpoint |
-| `POST` | `/auth/register` | Register a new user |
-| `POST` | `/auth/login` | Authenticate user and receive JWT token |
-
-### Protected Endpoints (`Authorization: Bearer <token>`)
-
-| Method | Endpoint | Description |
-| --- | --- | --- |
-| `POST` | `/tickets` | Create a new support ticket |
-| `GET` | `/tickets` | List tickets belonging to authenticated user |
-| `GET` | `/tickets/:id` | Fetch details of a specific ticket (owner gated) |
-| `PATCH` | `/tickets/:id/status` | Update ticket status (`open` → `in_progress` → `closed`) |
-
----
-
-## ⚙️ Environment Configuration
-
-Create a `.env` file in the root directory:
+Recommended: Docker Compose (app + Postgres)
 
 ```bash
+# Copy env template and start stack
 cp .env.example .env
-
-```
-
-| Variable | Description | Default |
-| --- | --- | --- |
-| `PORT` | Application server port | `8080` |
-| `DB_HOST` | PostgreSQL host | `localhost` |
-| `DB_PORT` | PostgreSQL port | `5432` |
-| `DB_USER` | PostgreSQL user | `postgres` |
-| `DB_PASSWORD` | PostgreSQL password | `postgres` |
-| `DB_NAME` | Database name | `ticketdb` |
-| `JWT_SECRET` | Secret key for JWT signing | *required* |
-| `JWT_EXPIRY_HOURS` | Token validity window | `24` |
-
----
-
-## 🐳 Getting Started
-
-### Using Docker Compose (Recommended)
-
-Run the full stack (Go application + PostgreSQL) in one command:
-
-```bash
-# Build and run containers
 docker-compose up --build -d
 
-# View live logs
 docker-compose logs -f app
-
-# Stop services
-docker-compose down
-
+# Stop
+# docker-compose down
 ```
 
-### Local Development
+Local development
 
 ```bash
-# Install Go dependencies
+# Install deps
 go mod download
 
-# Run database migrations and start server
+# Run migrations and start server
 go run cmd/server/main.go
 
-```
-
-Verify the service is running:
-
-```bash
+# Health-check
 curl http://localhost:8080/health
-# Output: {"status":"ok"}
-
+# => {"status":"ok"}
 ```
 
-```
+---
+
+## Environment (create a `.env` from `.env.example`)
+
+| Variable | Description | Default / Required |
+| --- | --- | --- |
+| PORT | Application listen port | 8080 |
+| DB_HOST | Postgres host | localhost |
+| DB_PORT | Postgres port | 5432 |
+| DB_USER | Postgres user | postgres |
+| DB_PASSWORD | Postgres password | postgres |
+| DB_NAME | Database name | ticketdb |
+| JWT_SECRET | Secret used to sign JWT tokens | required |
+| JWT_EXPIRY_HOURS | JWT token lifetime in hours | 24 |
+
+---
+
+## API
+
+All protected endpoints require: `Authorization: Bearer <token>`
+
+Public endpoints
+
+- GET /health — health check
+- POST /auth/register — register user
+- POST /auth/login — returns JWT token
+
+Protected endpoints (examples)
+
+- POST /tickets — create ticket
+  curl -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+    -d '{"title":"Issue","body":"Details"}' http://localhost:8080/tickets
+
+- GET /tickets — list tickets for authenticated user
+
+- PATCH /tickets/:id/status — update status (must follow progression)
+
+Notes
+
+- Status transitions are validated in the service layer and performed inside DB transactions with row-level locking to avoid race conditions.
+- Real-time updates: agents/clients can connect to the WebSocket hub to receive ticket events and broadcasts.
+
+---
+
+## System architecture
+
+DeskFlow uses a layered, interface-driven architecture to separate concerns and make the codebase testable.
+
+High-level flow:
+
+HTTP / WebSocket request → Router → Middleware (JWT, logging) → Handlers (DTO parsing) → Services (business logic, state machine) → Repositories (DB operations, transactions) → PostgreSQL (GORM)
+
+Principles
+
+- Separation of concerns
+- Interface-driven dependency injection for easy testing
+- Stateless JWT auth for horizontal scalability
+
+---
+
+## Project layout
 
 ```
+cmd/server/main.go          # entrypoint, dependency wiring
+internal/config             # env loading
+internal/database           # DB connection & migrations
+internal/handlers           # HTTP + WS handlers
+internal/services           # business logic & state machine
+internal/repository         # DB layer (pessimistic locks)
+internal/middleware         # auth + logging
+internal/models             # User and Ticket models
+Dockerfile
+docker-compose.yml
+.env.example
+```
+
+---
+
+## WebSocket hub
+
+The app exposes a WebSocket hub (see handlers/ws) that maintains client connections and broadcasts ticket events. The hub is built around buffered channels and goroutines to ensure low-latency broadcasts and backpressure handling.
+
+---
+
+## Testing & development tips
+
+- Use the provided docker-compose.yml to run Postgres locally for development.
+- Services and repositories are interface-driven; write unit tests by providing mocks.
+- Keep long-running side-effects out of DB transactions — use worker pools for notifications and audit logging.
+
+---
+
+## Contributing
+
+Contributions welcome. Suggested workflow:
+
+1. Fork the repo
+2. Create a feature branch
+3. Add tests for new behavior
+4. Open a PR describing the change
+
+Please follow Go idioms and add unit tests for service and repository behavior.
+
+---
+
+## License
+
+Specify your chosen license here (e.g. MIT). If you have a license file, link to it.
+
+---
+
+If you'd like, I can:
+- Add example curl requests for the auth and ticket flows
+- Add a small WebSocket client example (JS)
+- Add CI/coverage and repository badges
+

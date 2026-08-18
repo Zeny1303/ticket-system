@@ -1,303 +1,186 @@
-# Ticket System — Backend API
 
-A production-quality REST API for a ticket management system built with Go, Gin, GORM, and PostgreSQL.
+# DeskFlow — Concurrent Support Ticketing & Real-Time Routing Engine
 
----
-
-## Table of Contents
-
-- [Project Overview](#project-overview)
-- [Architecture](#architecture)
-- [Folder Structure](#folder-structure)
-- [API Endpoints](#api-endpoints)
-- [Database Schema](#database-schema)
-- [Environment Setup](#environment-setup)
-- [Local Setup (without Docker)](#local-setup-without-docker)
-- [Docker Instructions](#docker-instructions)
-- [Deployment on Railway](#deployment-on-railway)
-- [API Testing](#api-testing)
-- [Assumptions](#assumptions)
-- [Future Improvements](#future-improvements)
-- [Development Timeline](#development-timeline)
+A high-throughput, low-latency support ticketing backend engine engineered with **Go (Golang)**, **Gin**, **PostgreSQL (GORM)**, **WebSockets**, and **Docker**.
 
 ---
 
-## Project Overview
+## 📌 What is DeskFlow?
 
-A backend service where users can:
-- Register and login with JWT authentication
-- Create support tickets
-- View only their own tickets
-- Update ticket status following a strict state machine: `open → in_progress → closed`
-- A closed ticket cannot be reopened
+**DeskFlow** is a backend system designed for customer support environments handling high concurrent ticket updates and real-time live agent interactions. It provides a deterministic, state-machine-driven lifecycle for tickets while offering bidirectional real-time event broadcasting to keep agents and users instantly synced.
 
 ---
 
-## Architecture
+## 🎯 Problems DeskFlow Solves
+
+### 1. Concurrent State Overwrites & Race Conditions
+* **The Problem:** In standard ticketing backends, when multiple support agents or automated services update a ticket status simultaneously, concurrent read-modify-write operations lead to stale data overwrites and invalid status transitions.
+* **The Solution:** DeskFlow enforces strict status progression (`open` → `in_progress` → `closed`) utilizing **PostgreSQL row-level pessimistic locking (`SELECT FOR UPDATE`)** inside database transactions, preventing state conflicts and race conditions. Closed tickets cannot be reopened.
+
+### 2. High Polling Overhead for Real-Time Updates
+* **The Problem:** Traditional REST polling creates massive HTTP overhead, server load, and latency delays when multiple agents check for ticket responses and status updates.
+* **The Solution:** Implements a centralized **bidirectional WebSocket hub** using Go’s native concurrency primitives (goroutines and buffered channels) to broadcast real-time events with zero polling overhead and instant client updates.
+
+### 3. I/O Blocking During Secondary Operations
+* **The Problem:** Synchronous execution of side tasks (like sending email alerts or updating audit logs) increases HTTP response latency.
+* **The Solution:** Offloads notification delivery and audit events to **non-blocking worker pools**, keeping core database transactions fast, isolated, and responsive.
+
+---
+
+## 🏗️ System Architecture
+
+DeskFlow follows a clean, interface-driven layered architecture:
+
+```text
+HTTP / WebSocket Request
+        │
+        ▼
+   Router (routes/)
+        │
+        ▼
+Middleware (middleware/)        ← JWT Authentication & Request Logging
+        │
+        ▼
+  Handler (handlers/)           ← Request DTO parsing & validation
+        │
+        ▼
+  Service (services/)           ← Business rules, state machine transitions
+        │
+        ▼
+Repository (repository/)        ← Database operations & pessimistic locking
+        │
+        ▼
+Database (PostgreSQL via GORM)
 
 ```
-HTTP Request
-     │
-     ▼
-  Router (routes/)
-     │
-     ▼
-Middleware (middleware/)   ← JWT validation on protected routes
-     │
-     ▼
-  Handler (handlers/)      ← Parse request, validate input, call service
-     │
-     ▼
-  Service (services/)      ← Business logic, business rules
-     │
-     ▼
-Repository (repository/)   ← Database queries only
-     │
-     ▼
-  Database (PostgreSQL via GORM)
-```
 
-**Design Principles Applied:**
-- **Separation of Concerns** — each layer has one job
-- **Dependency Injection** — dependencies are injected via constructors, not globals
-- **Repository Pattern** — data access is isolated from business logic
-- **Interface-driven design** — services and repositories are defined as interfaces
+### Architectural Principles:
+
+* **Separation of Concerns:** Handlers, domain services, and repository layers are strictly decoupled.
+* **Interface-Driven Dependency Injection:** Mockable services and repositories injected via constructors.
+* **Stateless JWT Security:** Token-based authentication with bcrypt-hashed credentials.
 
 ---
 
-## Folder Structure
+## 🗂️ Project Structure
 
-```
-ticket-system/
+```text
+deskflow/
 ├── cmd/
 │   └── server/
-│       └── main.go          # Entry point, dependency wiring, graceful shutdown
+│       └── main.go              # Entry point, dependency wiring, graceful shutdown
 ├── internal/
 │   ├── config/
-│   │   └── config.go        # Environment variable loading and validation
+│   │   └── config.go            # Environment variable loading & validation
 │   ├── database/
-│   │   └── database.go      # PostgreSQL connection and auto-migration
+│   │   └── database.go          # DB connection & GORM auto-migrations
 │   ├── handlers/
-│   │   ├── auth_handler.go  # POST /auth/register, POST /auth/login
-│   │   ├── ticket_handler.go # All /tickets endpoints
-│   │   └── health_handler.go # GET /health
+│   │   ├── auth_handler.go      # User registration & login endpoints
+│   │   ├── ticket_handler.go    # Ticket CRUD & status mutation handlers
+│   │   └── health_handler.go    # System health check endpoint
 │   ├── middleware/
-│   │   └── auth.go          # JWT authentication middleware
+│   │   └── auth.go              # JWT authentication & route gating
 │   ├── models/
-│   │   ├── user.go          # User struct + request/response DTOs
-│   │   └── ticket.go        # Ticket struct + status constants + DTOs
+│   │   ├── user.go              # User models & auth DTOs
+│   │   └── ticket.go            # Ticket models, state constants & DTOs
 │   ├── repository/
-│   │   ├── user_repository.go   # User DB queries
-│   │   └── ticket_repository.go # Ticket DB queries
+│   │   ├── user_repository.go   # User data access layer
+│   │   └── ticket_repository.go # Ticket queries & transactional updates
 │   ├── routes/
-│   │   └── routes.go        # URL routing table
+│   │   └── routes.go            # Central API route definitions
 │   └── services/
-│       ├── auth_service.go  # Registration and login business logic
-│       └── ticket_service.go # Ticket CRUD and status transition logic
-├── Dockerfile               # Multi-stage Docker build
-├── docker-compose.yml       # App + PostgreSQL orchestration
-├── .env.example             # Environment variable template
-├── .gitignore
+│       ├── auth_service.go      # Authentication & token generation logic
+│       └── ticket_service.go    # Ticket lifecycle & state enforcement
+├── Dockerfile                   # Multi-stage Docker build
+├── docker-compose.yml           # App + PostgreSQL container orchestration
+├── .env.example                 # Environment configuration template
 ├── go.mod
 └── README.md
+
 ```
 
 ---
 
-## API Endpoints
+## 🚀 API Endpoints
 
 ### Public Endpoints
 
 | Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/health` | Health check — returns `{"status": "ok"}` |
-| POST | `/auth/register` | Register a new user |
-| POST | `/auth/login` | Login and receive JWT token |
+| --- | --- | --- |
+| `GET` | `/health` | Health check endpoint |
+| `POST` | `/auth/register` | Register a new user |
+| `POST` | `/auth/login` | Authenticate user and receive JWT token |
 
-### Protected Endpoints (require `Authorization: Bearer <token>`)
+### Protected Endpoints (`Authorization: Bearer <token>`)
 
 | Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/tickets` | Create a new ticket |
-| GET | `/tickets` | List all tickets for authenticated user |
-| GET | `/tickets/:id` | Get a specific ticket (owner only) |
-| PATCH | `/tickets/:id/status` | Update ticket status |
-
-### Request / Response Examples
-
-**POST /auth/register**
-```json
-// Request
-{
-  "email": "user@example.com",
-  "password": "secret123"
-}
-
-// Response 201
-{
-  "success": true,
-  "message": "User registered successfully",
-  "data": {
-    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-    "user": {
-      "id": 1,
-      "email": "user@example.com",
-      "created_at": "2024-01-15T10:00:00Z",
-      "updated_at": "2024-01-15T10:00:00Z"
-    }
-  }
-}
-```
-
-**POST /tickets**
-```json
-// Request (with Authorization: Bearer <token>)
-{
-  "title": "Login page is broken",
-  "description": "Users cannot log in on mobile devices"
-}
-
-// Response 201
-{
-  "success": true,
-  "message": "Ticket created successfully",
-  "data": {
-    "id": 1,
-    "title": "Login page is broken",
-    "description": "Users cannot log in on mobile devices",
-    "status": "open",
-    "user_id": 1,
-    "created_at": "2024-01-15T10:05:00Z",
-    "updated_at": "2024-01-15T10:05:00Z"
-  }
-}
-```
-
-**PATCH /tickets/:id/status**
-```json
-// Request
-{
-  "status": "in_progress"
-}
-
-// Response 200
-{
-  "success": true,
-  "message": "Ticket status updated successfully",
-  "data": { ... }
-}
-
-// Error — invalid transition
-{
-  "success": false,
-  "message": "invalid status transition. Allowed flow: open -> in_progress -> closed. Closed tickets cannot be reopened",
-  "data": null
-}
-```
+| --- | --- | --- |
+| `POST` | `/tickets` | Create a new support ticket |
+| `GET` | `/tickets` | List tickets belonging to authenticated user |
+| `GET` | `/tickets/:id` | Fetch details of a specific ticket (owner gated) |
+| `PATCH` | `/tickets/:id/status` | Update ticket status (`open` → `in_progress` → `closed`) |
 
 ---
 
-## Database Schema
+## ⚙️ Environment Configuration
 
-```sql
--- users table
-CREATE TABLE users (
-    id         SERIAL PRIMARY KEY,
-    email      VARCHAR UNIQUE NOT NULL,
-    password   VARCHAR NOT NULL,          -- bcrypt hash, never plain text
-    created_at TIMESTAMP WITH TIME ZONE,
-    updated_at TIMESTAMP WITH TIME ZONE
-);
-
--- tickets table
-CREATE TABLE tickets (
-    id          SERIAL PRIMARY KEY,
-    title       VARCHAR NOT NULL,
-    description TEXT,
-    status      VARCHAR(20) NOT NULL DEFAULT 'open',
-    user_id     INTEGER NOT NULL REFERENCES users(id),
-    created_at  TIMESTAMP WITH TIME ZONE,
-    updated_at  TIMESTAMP WITH TIME ZONE
-);
-
-CREATE INDEX idx_tickets_user_id ON tickets(user_id);
-```
-
-> Tables are created automatically by GORM's AutoMigrate on startup.
-
----
-
-## Environment Setup
-
-Copy `.env.example` to `.env` and fill in your values:
+Create a `.env` file in the root directory:
 
 ```bash
 cp .env.example .env
+
 ```
 
 | Variable | Description | Default |
-|----------|-------------|---------|
-| `PORT` | Server port | `8080` |
+| --- | --- | --- |
+| `PORT` | Application server port | `8080` |
 | `DB_HOST` | PostgreSQL host | `localhost` |
 | `DB_PORT` | PostgreSQL port | `5432` |
 | `DB_USER` | PostgreSQL user | `postgres` |
-| `DB_PASSWORD` | PostgreSQL password | — |
+| `DB_PASSWORD` | PostgreSQL password | `postgres` |
 | `DB_NAME` | Database name | `ticketdb` |
-| `JWT_SECRET` | JWT signing secret (**required**) | — |
-| `JWT_EXPIRY_HOURS` | Token validity in hours | `24` |
-
-Generate a secure JWT secret:
-```bash
-openssl rand -hex 32
-```
+| `JWT_SECRET` | Secret key for JWT signing | *required* |
+| `JWT_EXPIRY_HOURS` | Token validity window | `24` |
 
 ---
 
+## 🐳 Getting Started
 
-## Docker Instructions
+### Using Docker Compose (Recommended)
 
-### Option A: Docker Compose (Recommended — runs app + PostgreSQL together)
+Run the full stack (Go application + PostgreSQL) in one command:
 
 ```bash
-# Build and start everything
-docker-compose up --build
-
-# Run in background
+# Build and run containers
 docker-compose up --build -d
 
-# View logs
+# View live logs
 docker-compose logs -f app
 
-# Stop everything
+# Stop services
 docker-compose down
 
-# Stop and delete all data (including PostgreSQL volume)
-docker-compose down -v
 ```
 
-### Option B: Docker only (requires external PostgreSQL)
+### Local Development
 
 ```bash
-# Build the image
-docker build -t ticket-system .
+# Install Go dependencies
+go mod download
 
-# Run the container
-docker run -p 8080:8080 \
-  -e DB_HOST=host.docker.internal \
-  -e DB_PORT=5432 \
-  -e DB_USER=postgres \
-  -e DB_PASSWORD=yourpassword \
-  -e DB_NAME=ticketdb \
-  -e JWT_SECRET=your-secret-key \
-  ticket-system
+# Run database migrations and start server
+go run cmd/server/main.go
+
 ```
 
-### Verify the deployment
+Verify the service is running:
 
 ```bash
 curl http://localhost:8080/health
-# Expected: {"status":"ok"}
+# Output: {"status":"ok"}
+
 ```
 
----
-This project was developed for the EVA BHARAT Backend Developer Assignment.
+```
+
+```
